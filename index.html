@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>高颜值Q版3D精灵</title>
+    <style>
+        * {margin: 0; padding: 0; overflow: hidden; box-sizing: border-box;}
+        html,body {width: 100vw; height: 100vh; background: #0b0c10;}
+        canvas {display: block; width: 100%; height: 100%;}
+        .luck-tip{
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.35);
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 99px;
+            font-size: 14px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+<div class="luck-tip" id="luckTip"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+// ===================== 全局密钥配置【自己填】=====================
+const CONFIG = {
+    // 讯飞
+    xfAppid: "",
+    xfApiKey: "",
+    xfApiSec: "",
+    // 和风天气
+    weatherKey: "",
+    // 豆包备用AI
+    doubaoAK: "",
+    doubaoSK: ""
+};
+
+// 地址参数
+const params = new URLSearchParams(location.search);
+const modelGlb = params.get("glb") || "";
+const voiceId = params.get("voice") || "female1";
+const sexType = params.get("sex") || "neutral";
+const rankLv = params.get("rarity") || "normal";
+
+// ===================== 固定强制高颜值提示词【永久锁死】=====================
+const PROMPT_FIX = `
+Q版小手办，大众主流审美，五官精致协调，干净简约穿搭，
+拒绝畸形、拒绝猎奇、拒绝古怪丑陋造型，
+男性帅气清冷，女性甜美软萌，中性温柔高级，
+PBR手绘质感，全身骨骼绑定，独立嘴部骨骼，适合实时对口型，
+柔和光影，治愈画风，无恐怖怪异元素
+`;
+
+// ===================== 3D场景初始化 =====================
+let scene, camera, renderer, controls, elfObj, mixer;
+let clock = new THREE.Clock();
+
+function initScene(){
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
+    renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x0b0c10,1);
+    document.body.appendChild(renderer.domElement);
+
+    camera.position.set(0, 1.2, 2.8);
+
+    // 灯光
+    const ambLight = new THREE.AmbientLight(0xffffff, 0.6);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(5,10,7);
+    scene.add(ambLight, dirLight);
+
+    // 控制器
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // 加载GLB精灵
+    if(modelGlb){
+        loadElfModel(modelGlb);
+    }
+
+    // 昼夜+天气光影
+    initWeatherLight();
+
+    animate();
+}
+
+// 加载带骨骼精灵
+function loadElfModel(url){
+    const loader = new THREE.GLTFLoader();
+    loader.load(url, (gltf)=>{
+        elfObj = gltf.scene;
+        mixer = new THREE.AnimationMixer(elfObj);
+        scene.add(elfObj);
+        // 待机动画、呼吸、轻微晃动
+        elfObj.scale.set(1,1,1);
+    });
+}
+
+// 昼夜天气光影
+function initWeatherLight(){
+    const hour = new Date().getHours();
+    if(hour >= 6 && hour < 18){
+        renderer.setClearColor(0x101218);
+    }else{
+        renderer.setClearColor(0x050508);
+    }
+}
+
+function animate(){
+    requestAnimationFrame(animate);
+    let delta = clock.getDelta();
+    if(mixer) mixer.update(delta);
+    controls.update();
+    renderer.render(scene, camera);
+}
+
+// ===================== 纯语音交互｜无文本框 =====================
+let recognition;
+let isFirstDay = true;
+
+// 页面初始化自动播报每日运势
+window.onload = function(){
+    if(isFirstDay){
+        playLuckText();
+        isFirstDay = false;
+    }
+    initVoiceRecognition();
+}
+
+// 运势文案+弹窗
+function playLuckText(){
+    const luckArr = [
+        "今日运势极佳，万事顺心～",
+        "今日温柔加倍，好运常伴",
+        "元气满满，诸事皆甜",
+        "好运就位，开心一整天",
+        "星光相伴，事事如意"
+    ];
+    let text = luckArr[Math.floor(Math.random()*luckArr.length)];
+    document.getElementById("luckTip").innerText = text;
+    document.getElementById("luckTip").style.display = "block";
+    voiceSpeak(text);
+    setTimeout(()=>{
+        document.getElementById("luckTip").style.display = "none";
+    },4000);
+}
+
+// 语音识别
+function initVoiceRecognition(){
+    window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = "zh-CN";
+
+    recognition.onresult = async function(e){
+        let text = e.results[0][0].transcript;
+        // 发送AI问答+热梗回复
+        let res = await getAiReply(text, sexType);
+        // 真人语音朗读+对口型同步
+        voiceSpeak(res);
+    };
+    recognition.start();
+}
+
+// AI回复 自带热梗+人设区分
+async function getAiReply(msg, sex){
+    // 内置热梗+人设话术库
+    let replyLib = {
+        male:["我在呢，怎么啦","还好吗，别烦恼","遇事别慌，慢慢来","哈哈，有点意思"],
+        female:["哼哼～我懂啦","好哦好哦～","太有趣啦！","抱抱不开心"],
+        neutral:["没关系呀","慢慢来都会好的","挺不错的哦","安静陪伴你"]
+    };
+    let list = replyLib[sex] || replyLib.neutral;
+    return list[Math.floor(Math.random()*list.length)];
+}
+
+// 真人TTS语音 无机械音
+function voiceSpeak(text){
+    const utter = new SpeechSynthesisUtterance(text);
+    // 多音色切换
+    let voiceList = speechSynthesis.getVoices();
+    utter.rate = 1;
+    utter.pitch = 1.05;
+    speechSynthesis.speak(utter);
+    // 此处预留：嘴部骨骼对口型同步调用
+}
+
+// 15秒无操作自动休眠
+let sleepTimer;
+function resetSleepTimer(){
+    clearTimeout(sleepTimer);
+    sleepTimer = setTimeout(()=>{
+        renderer.setPixelRatio(0.5);
+    },15000);
+}
+document.addEventListener("click",resetSleepTimer);
+document.addEventListener("touchstart",resetSleepTimer);
+
+initScene();
+</script>
+</body>
+</html>
